@@ -1,4 +1,4 @@
-# roboport
+# robo
 
 Minimal TypeScript framework for building LLM agents.
 
