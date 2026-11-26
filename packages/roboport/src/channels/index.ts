@@ -8,6 +8,7 @@ import {
 } from './core';
 import { serve, type ChannelRuntime, type ServeOptions } from './serve';
 import {
+  createTelegramUpdateProcessor,
   stream,
   telegramChannel,
   type TelegramChannel,
@@ -19,6 +20,7 @@ import {
 import { fileStore, memoryStore, type ConversationStore } from './store';
 
 export {
+  createTelegramUpdateProcessor,
   fileStore,
   memoryStore,
   serve,

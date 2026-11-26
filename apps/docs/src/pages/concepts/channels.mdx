@@ -44,6 +44,22 @@ await channel.client.setWebhook(`${publicUrl}${route}`, {
 });
 ```
 
+### Processing durably queued Telegram updates
+
+The webhook above acknowledges after dispatching into process memory. If your process may stop after acknowledging Telegram, authenticate the webhook and persist the raw update first, keyed by bot and `update_id`. Only return HTTP 200 after that write succeeds. In your queue consumer:
+
+```ts
+import { createTelegramUpdateProcessor } from 'roboport/channels';
+
+const processUpdate = createTelegramUpdateProcessor(agent, { token }, { store });
+await processUpdate(job.update);
+await job.complete();
+```
+
+The processor does not start polling or register a webhook. It uses the same conversation, authorization, and relay options as `serve`. It resolves after reply delivery, history writes, and session cleanup (or immediately for an ignored update). Turn failures reject, even when you supply an `onError` callback. Supply a persistent conversation store if history must survive a restart.
+
+One processor serializes turns within a conversation. Your queue owns ordering across processes, retries, and deduplication. A failure can happen **after** a Telegram reply or tool side effect, so replay does not guarantee exactly-once delivery.
+
 ## Inbound messages
 
 Each inbound message is provider-agnostic data:
