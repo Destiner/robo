@@ -73,15 +73,16 @@ async function defaultError(
   await conversation.send('Sorry — something went wrong.').catch(() => {});
 }
 
-// Bind an agent to a channel: one long-lived conversation per `conversationId`,
-// serialized per conversation (Session.send throws on a concurrent turn), with
-// the agent's reply relayed back. The single entry point — grow into the seams
-// over time, or drop to `channel.open()` for fully custom routing.
-function serve<In extends InboundMessage, Conv extends Conversation>(
+/** @internal */
+function createTurnHandler<
+  In extends InboundMessage,
+  Conv extends Conversation,
+>(
   agent: Agent,
-  channel: Channel<In, Conv>,
+  channel: Pick<Channel<In, Conv>, 'name' | 'relay'>,
   options: ServeOptions<In, Conv> = {},
-): ChannelRuntime {
+  delivery: 'awaited' | 'background' = 'awaited',
+): (message: In, conversation: Conv) => Promise<void> {
   const store = options.store ?? memoryStore();
   const keyOf =
     options.conversation ?? ((message: In): string => message.conversationId);
@@ -135,12 +136,15 @@ function serve<In extends InboundMessage, Conv extends Conversation>(
         : undefined;
 
       const session = agent.session({ messages: seed, systemExtension });
-      // Persist the user turn before running, so a mid-turn crash still records it.
-      await store.append(id, toUserMessage(promptValue));
-      stopThinking = conversation.thinking?.();
       try {
+        // Persist the user turn before running, so a mid-turn crash still records it.
+        await store.append(id, toUserMessage(promptValue));
+        stopThinking = conversation.thinking?.();
         const turn = session.send(promptValue);
         await relay(turn, conversation, message);
+        // Custom relays need not consume the event stream. Await the model result
+        // before persisting or closing an externally scheduled turn.
+        if (delivery === 'awaited') await turn;
         stopThinking?.();
         stopThinking = undefined;
         await store.append(id, ...newMessages(session, seedLength));
@@ -151,26 +155,44 @@ function serve<In extends InboundMessage, Conv extends Conversation>(
       stopThinking?.();
       const err = error instanceof Error ? error : new Error(String(error));
       if (options.onError) await options.onError(err, conversation, message);
-      else await defaultError(err, conversation);
+      else if (delivery === 'background') await defaultError(err, conversation);
+      if (delivery === 'awaited') throw err;
     }
   }
 
-  function handler(message: In, conversation: Conv): void {
+  return (message, conversation) => {
     const id = keyOf(message);
     // Enqueue synchronously so same-conversation messages keep arrival order.
     const prior = queues.get(id) ?? Promise.resolve();
-    const next = prior
-      .then(() => runTurn(message, conversation, id))
-      .catch((error: unknown) => {
-        console.error(`[channels] ${channel.name} ${id}:`, error);
-      });
-    queues.set(id, next);
-    void next.finally(() => {
+    const turn = prior
+      .catch(() => {})
+      .then(() => runTurn(message, conversation, id));
+    const result =
+      delivery === 'background'
+        ? turn.catch((error: unknown) => {
+            console.error(`[channels] ${channel.name} ${id}:`, error);
+          })
+        : turn;
+    const next = result.finally(() => {
       if (queues.get(id) === next) queues.delete(id);
     });
-  }
+    queues.set(id, next);
+    return next;
+  };
+}
 
-  const opened = Promise.resolve(channel.open(handler));
+// Bind an agent to a channel without delaying transport acknowledgements.
+function serve<In extends InboundMessage, Conv extends Conversation>(
+  agent: Agent,
+  channel: Channel<In, Conv>,
+  options: ServeOptions<In, Conv> = {},
+): ChannelRuntime {
+  const handle = createTurnHandler(agent, channel, options, 'background');
+  const opened = Promise.resolve(
+    channel.open((message, conversation) => {
+      void handle(message, conversation);
+    }),
+  );
   opened.catch((error: unknown) => {
     console.error(`[channels] ${channel.name} failed to open:`, error);
   });
@@ -192,4 +214,4 @@ function serve<In extends InboundMessage, Conv extends Conversation>(
   };
 }
 
-export { serve, type ChannelRuntime, type ServeOptions };
+export { createTurnHandler, serve, type ChannelRuntime, type ServeOptions };

@@ -1,3 +1,4 @@
+import type { Agent } from '@/core';
 import type { MaybePromise, Unsub } from '@/triggers/core';
 import {
   matchesCommand,
@@ -7,6 +8,7 @@ import {
   TelegramReceiver,
   type SendRichMessageOptions,
   type TelegramMessage,
+  type TelegramUpdate,
 } from '@/triggers/sources/telegram';
 
 import type {
@@ -17,6 +19,7 @@ import type {
   Relay,
   ReplyContext,
 } from '../core';
+import { createTurnHandler, type ServeOptions } from '../serve';
 
 // Narrows `raw` to the Telegram message, so serve's seams (prompt, authorize,
 // context, relay, onError) see the transport payload without casting.
@@ -122,53 +125,74 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function conversationFor(
+  client: TelegramClient,
+  message: TelegramMessage,
+): TelegramConversation {
+  const chatId = message.chat.id;
+  const threadId = message.message_thread_id;
+  return {
+    conversationId: conversationKey(message),
+    chatId,
+    client,
+    // Default replies/drafts to the originating topic; caller opts win.
+    send: async (
+      text: string,
+      opts?: SendRichMessageOptions,
+    ): Promise<void> => {
+      await client.sendRichMessage(
+        chatId,
+        { markdown: text },
+        { messageThreadId: threadId, ...opts },
+      );
+    },
+    draft: async (text: string): Promise<void> => {
+      await client.sendRichMessageDraft(
+        chatId,
+        message.message_id,
+        { markdown: text },
+        { messageThreadId: threadId },
+      );
+    },
+    thinking: (): (() => void) => startTyping(client, chatId),
+  };
+}
+
+function forwards(
+  options: Omit<TelegramChannelOptions, 'transport'>,
+  message: TelegramMessage,
+): boolean {
+  return (
+    !options.commands ||
+    matchesCommand(message, options.commands, options.botUsername)
+  );
+}
+
+// Process an authenticated update from a durable queue without opening a transport.
+function createTelegramUpdateProcessor(
+  agent: Agent,
+  channelOptions: Omit<TelegramChannelOptions, 'transport'>,
+  options?: ServeOptions<TelegramInboundMessage, TelegramConversation>,
+): (update: TelegramUpdate) => Promise<void> {
+  const client = new TelegramClient(channelOptions.token);
+  const handle = createTurnHandler(agent, { name: 'telegram' }, options);
+  return async (update): Promise<void> => {
+    const message = update.message;
+    if (!message || !forwards(channelOptions, message)) return;
+    await handle(toInbound(message), conversationFor(client, message));
+  };
+}
+
 function telegramChannel(options: TelegramChannelOptions): TelegramChannel {
   const client = new TelegramClient(options.token);
   const transport: TelegramTransport = options.transport ?? { mode: 'polling' };
-
-  function conversationFor(message: TelegramMessage): TelegramConversation {
-    const chatId = message.chat.id;
-    const threadId = message.message_thread_id;
-    return {
-      conversationId: conversationKey(message),
-      chatId,
-      client,
-      // Default replies/drafts to the originating topic; caller opts win.
-      send: async (
-        text: string,
-        opts?: SendRichMessageOptions,
-      ): Promise<void> => {
-        await client.sendRichMessage(
-          chatId,
-          { markdown: text },
-          { messageThreadId: threadId, ...opts },
-        );
-      },
-      draft: async (text: string): Promise<void> => {
-        await client.sendRichMessageDraft(
-          chatId,
-          message.message_id,
-          { markdown: text },
-          { messageThreadId: threadId },
-        );
-      },
-      thinking: (): (() => void) => startTyping(client, chatId),
-    };
-  }
-
-  function forwards(message: TelegramMessage): boolean {
-    return (
-      !options.commands ||
-      matchesCommand(message, options.commands, options.botUsername)
-    );
-  }
 
   function deliver(
     handler: ChannelHandler<TelegramInboundMessage, TelegramConversation>,
     message: TelegramMessage,
   ): void {
     void Promise.resolve(
-      handler(toInbound(message), conversationFor(message)),
+      handler(toInbound(message), conversationFor(client, message)),
     ).catch((error: unknown) => {
       console.error('[channels] telegram handler error:', error);
     });
@@ -217,7 +241,8 @@ function telegramChannel(options: TelegramChannelOptions): TelegramChannel {
             for (const update of updates) {
               offset = update.update_id + 1;
               const message = update.message;
-              if (message && forwards(message)) deliver(handler, message);
+              if (message && forwards(options, message))
+                deliver(handler, message);
             }
           } catch (error) {
             if (controller.signal.aborted) break;
@@ -288,6 +313,7 @@ function stream(
 }
 
 export {
+  createTelegramUpdateProcessor,
   stream,
   telegramChannel,
   type TelegramChannel,

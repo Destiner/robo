@@ -9,12 +9,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Destiner/roboport.git",
+    "url": "git+https://github.com/Destiner/robo.git",
     "directory": "packages/roboport"
   },
-  "homepage": "https://github.com/Destiner/roboport#readme",
+  "homepage": "https://github.com/Destiner/robo#readme",
   "bugs": {
-    "url": "https://github.com/Destiner/roboport/issues"
+    "url": "https://github.com/Destiner/robo/issues"
   },
   "keywords": [
     "llm",

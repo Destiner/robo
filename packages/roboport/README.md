@@ -11,6 +11,7 @@ bun add roboport zod
 ## Exports
 
 - `roboport` — agent loop and core `Tool` / `Skill` / `Agent` / `Session` primitives
+- `roboport/channels` — Telegram transports, conversation stores, and an awaitable processor for queued updates
 - `roboport/models` — `Model` adapters (Anthropic, Google, Moonshot, OpenAI, OpenAI-compatible)
 - `roboport/mcp` — MCP client (transports, auth, server presets)
 - `roboport/harness` — `Harness` bundle and standalone, reusable tools
@@ -19,4 +20,4 @@ bun add roboport zod
 
 ## Docs
 
-See [github.com/Destiner/roboport](https://github.com/Destiner/roboport).
+See [github.com/Destiner/robo](https://github.com/Destiner/robo).
