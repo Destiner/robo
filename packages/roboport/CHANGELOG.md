@@ -1,5 +1,11 @@
 # roboport
 
+## 0.9.2
+
+### Patch Changes
+
+- [#85](https://github.com/Destiner/robo/pull/85) [`c53acb1`](https://github.com/Destiner/robo/commit/c53acb155495131d40d603858d82c2324f994458) Thanks [@Destiner](https://github.com/Destiner)! - Add `createTelegramUpdateProcessor` to await a queued Telegram turn, including reply delivery and history writes, without starting a transport. Existing webhook and polling behavior is unchanged.
+
 ## 0.9.1
 
 ### Patch Changes
